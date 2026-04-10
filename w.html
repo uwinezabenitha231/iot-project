@@ -1,0 +1,254 @@
+<?php
+session_start(); // Start session for login management
+
+$conn = new mysqli("localhost","root","","livestock");
+if ($conn->connect_error) die("Connection failed");
+
+// Check if user is logged in
+$isLoggedIn = isset($_SESSION['logged_in']) && $_SESSION['logged_in'] === true;
+
+// Handle login
+if(isset($_POST['login'])){
+    $username = $_POST['username'] ?? '';
+    $password = $_POST['password'] ?? '';
+    
+    if($username === 'admin' && $password === '123'){
+        $_SESSION['logged_in'] = true;
+        $_SESSION['username'] = $username;
+        header("Location: ?page=home");
+        exit();
+    } else {
+        $error_message = "Invalid username or password!";
+    }
+}
+
+// Handle logout
+if(isset($_GET['logout'])){
+    session_destroy();
+    header("Location: ?page=login");
+    exit();
+}
+
+// If not logged in, show login page
+if(!$isLoggedIn && (!isset($_GET['page']) || $_GET['page'] != 'login')){
+    header("Location: ?page=login");
+    exit();
+}
+
+$page = $_GET['page'] ?? 'home';
+$message = "";
+$error_message = "";
+
+/* ====================== STATS ====================== */
+$totalAnimals = $conn->query("SELECT COUNT(*) as t FROM Animals")->fetch_assoc()['t'];
+$totalHealth = $conn->query("SELECT COUNT(*) as t FROM health_records")->fetch_assoc()['t'];
+
+// Get active sick animals count
+$activeSick = $conn->query("SELECT COUNT(*) as t FROM health_records WHERE type='Sick' AND (endDate >= CURDATE() OR endDate IS NULL)")->fetch_assoc()['t'];
+
+// Get active pregnant animals count
+$activePregnant = $conn->query("SELECT COUNT(*) as t FROM health_records WHERE type='Pregnant' AND (endDate >= CURDATE() OR endDate IS NULL)")->fetch_assoc()['t'];
+
+/* ====================== ANIMAL CRUD ====================== */
+if(isset($_POST['save_animal'])){
+    $stmt=$conn->prepare("INSERT INTO Animals(tagId,name,animalType,sex,breed,birthdate,ownerContact) VALUES(?,?,?,?,?,?,?)");
+    $stmt->bind_param("sssssss", $_POST['tag'],$_POST['name'],$_POST['type'],$_POST['sex'], $_POST['breed'],$_POST['date'],$_POST['owner'] );
+    if($stmt->execute()){
+        $message = "Animal added successfully!";
+    } else {
+        $error_message = "Error: ".$stmt->error;
+    }
+}
+
+if(isset($_POST['update_animal'])){
+    $stmt=$conn->prepare("UPDATE Animals SET name=?,animalType=?,sex=?,breed=?,birthdate=?,ownerContact=? WHERE tagId=?");
+    $stmt->bind_param("sssssss", $_POST['name'],$_POST['type'],$_POST['sex'], $_POST['breed'],$_POST['date'],$_POST['owner'],$_POST['tag'] );
+    $stmt->execute();
+    $message = "Animal updated successfully!";
+}
+
+if(isset($_GET['delete_animal'])){
+    // First delete related health records
+    $stmt2 = $conn->prepare("DELETE FROM health_records WHERE tagId=?");
+    $stmt2->bind_param("s", $_GET['delete_animal']);
+    $stmt2->execute();
+    
+    // Then delete the animal
+    $stmt=$conn->prepare("DELETE FROM Animals WHERE tagId=?");
+    $stmt->bind_param("s",$_GET['delete_animal']);
+    $stmt->execute();
+    $message = "Animal deleted successfully!";
+}
+
+$editAnimal=null;
+if(isset($_GET['edit_animal'])){
+    $r=$conn->query("SELECT * FROM Animals WHERE tagId='".$conn->real_escape_string($_GET['edit_animal'])."'");
+    $editAnimal=$r->fetch_assoc();
+}
+
+/* ====================== HEALTH CRUD ====================== */
+
+// Health record validation - TAG must exist in Animals
+if(isset($_POST['save_health']) || isset($_POST['update_health'])){
+    $tag = $_POST['tag'];
+    
+    // Check if tag exists in Animals
+    $checkTag = $conn->prepare("SELECT tagId FROM Animals WHERE tagId=?");
+    $checkTag->bind_param("s", $tag);
+    $checkTag->execute();
+    $resultTag = $checkTag->get_result();
+    
+    if($resultTag->num_rows == 0){
+        // Tag not found in Animals - error message
+        $error_message = "Error: Tag ID '".$tag."' not found in Animals! Please add the animal first before creating health records.";
+    } else {
+        // Tag exists - proceed with save/update
+        if(isset($_POST['save_health'])){
+            $stmt=$conn->prepare("INSERT INTO health_records(tagId,type,startDate,endDate,nextEventDate,notes,vetName,vetContact) VALUES(?,?,?,?,?,?,?,?)");
+            $stmt->bind_param("ssssssss", $tag, $_POST['type'], $_POST['start'], $_POST['end'], $_POST['next'], $_POST['notes'], $_POST['vet'], $_POST['contact']);
+            if($stmt->execute()){
+                $message = "Health record added successfully for tag: ".$tag;
+            } else {
+                $error_message = "Error: ".$stmt->error;
+            }
+        } else if(isset($_POST['update_health'])){
+            $stmt=$conn->prepare("UPDATE health_records SET tagId=?,type=?,startDate=?,endDate=?,nextEventDate=?,notes=?,vetName=?,vetContact=? WHERE id=?");
+            $stmt->bind_param("ssssssssi", $tag, $_POST['type'], $_POST['start'], $_POST['end'], $_POST['next'], $_POST['notes'], $_POST['vet'], $_POST['contact'], $_POST['id']);
+            $stmt->execute();
+            $message = "Health record updated successfully!";
+        }
+    }
+}
+
+if(isset($_GET['delete_health'])){
+    $stmt=$conn->prepare("DELETE FROM health_records WHERE id=?");
+    $stmt->bind_param("i",$_GET['delete_health']);
+    $stmt->execute();
+    $message = "Health record deleted successfully!";
+}
+
+$editHealth=null;
+if(isset($_GET['edit_health'])){
+    $r=$conn->query("SELECT * FROM health_records WHERE id=".intval($_GET['edit_health']));
+    $editHealth=$r->fetch_assoc();
+}
+
+/* ====================== FUNCTION TO GET BREEDS ====================== */
+function getBreeds($type){
+    $options = [];
+    switch($type){
+        case "Cow": $options = ["Ankole","Friesian","Jersey","Local Breed"]; break;
+        case "Goat": $options = ["Boer","Local Goat","Saanen"]; break;
+        case "Sheep": $options = ["Dorper","Merino","Local Sheep"]; break;
+        case "Pig": $options = ["Large White","Landrace","Local Pig"]; break;
+        case "Chicken": $options = ["Broiler","Layer","Local Chicken"]; break;
+    }
+    return $options;
+}
+
+/* ====================== LOGIN PAGE ====================== */
+if($page == 'login'):
+?>
+<!DOCTYPE html>
+<html>
+<head>
+<title>Login - Livestock Management System</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:Arial;background:linear-gradient(135deg, #27ae60, #2c3e50);height:100vh;display:flex;justify-content:center;align-items:center}
+.login-container{background:white;padding:40px;border-radius:10px;box-shadow:0 0 20px rgba(0,0,0,0.2);width:350px}
+.login-container h2{text-align:center;color:#27ae60;margin-bottom:30px}
+.login-container input{width:100%;padding:12px;margin:10px 0;border:1px solid #ddd;border-radius:5px}
+.login-container button{width:100%;padding:12px;background:#27ae60;color:white;border:none;border-radius:5px;cursor:pointer;font-size:16px}
+.login-container button:hover{background:#219a52}
+.error{background:#f8d7da;color:#721c24;padding:10px;border-radius:5px;margin-bottom:15px;text-align:center}
+</style>
+</head>
+<body>
+<div class="login-container">
+<h2> Livestock Management System</h2>
+<h3 style="text-align:center;margin-bottom:20px">Login</h3>
+<?php if(isset($error_message)): ?>
+<div class="error"> <?= htmlspecialchars($error_message) ?></div>
+<?php endif; ?>
+<form method="POST">
+<input type="text" name="username" placeholder="Username" required>
+<input type="password" name="password" placeholder="Password" required>
+<button type="submit" name="login">Login</button>
+</form>
+<p style="text-align:center;margin-top:20px;color:#666">Demo: admin / 123</p>
+</div>
+</body>
+</html>
+<?php
+exit();
+endif;
+?>
+
+<!DOCTYPE html>
+<html>
+<head>
+<title>Livestock Management System</title>
+<style>
+body{font-family:Arial;background:#f4f6f9}
+.container{width:90%;margin:auto}
+.header{display:flex;justify-content:space-between;align-items:center;background:#2c3e50;padding:10px 20px;border-radius:8px;margin-bottom:20px;color:white}
+.header h1{margin:0}
+.logout-btn{background:#e74c3c;color:white;padding:8px 15px;text-decoration:none;border-radius:5px}
+.logout-btn:hover{background:#c0392b}
+.card{display:inline-block;padding:20px;margin:10px;background:#27ae60;color:white;text-decoration:none;border-radius:8px;transition:transform 0.3s}
+.card:hover{transform:scale(1.05)}
+form{background:#fff;padding:20px;margin:10px 0;border-radius:8px;box-shadow:0 2px 5px rgba(0,0,0,0.1)}
+input,select{width:100%;padding:8px;margin-top:5px;border:1px solid #ddd;border-radius:4px}
+table{width:100%;border-collapse:collapse;margin-top:10px;background:white}
+th,td{border:1px solid #ddd;padding:10px;text-align:center}
+th{background:#27ae60;color:white}
+.back-btn{margin-top:15px;display:inline-block;padding:10px 15px;background:#555;color:white;text-decoration:none;border-radius:5px}
+.success{background:#d4edda;color:#155724;padding:10px;margin:10px 0;border-radius:5px;border:1px solid #c3e6cb}
+.error{background:#f8d7da;color:#721c24;padding:10px;margin:10px 0;border-radius:5px;border:1px solid #f5c6cb}
+.warning{background:#fff3cd;color:#856404;padding:10px;margin:10px 0;border-radius:5px;border:1px solid #ffeeba}
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:20px;margin-top:20px}
+.stat-card{background:white;padding:25px;border-radius:10px;text-align:center;box-shadow:0 2px 10px rgba(0,0,0,0.1)}
+.stat-card h3{color:#27ae60;font-size:36px;margin:10px 0}
+.stat-card p{color:#666;font-size:16px}
+</style>
+<script>
+function updateBreeds(){
+    let type=document.getElementById("typeSelect").value;
+    let breedInput=document.getElementById("breedInput");
+    let breeds = [];
+    switch(type){
+        case "Cow": breeds=["Ankole","Friesian","Jersey","Local Breed"]; break;
+        case "Goat": breeds=["Boer","Local Goat","Saanen"]; break;
+        case "Sheep": breeds=["Dorper","Merino","Local Sheep"]; break;
+        case "Pig": breeds=["Large White","Landrace","Local Pig"]; break;
+        case "Chicken": breeds=["Broiler","Layer","Local Chicken"]; break;
+    }
+    let dataList = document.getElementById("breedList");
+    dataList.innerHTML = "";
+    breeds.forEach(b=>{
+        let opt=document.createElement("option");
+        opt.value=b;
+        dataList.appendChild(opt);
+    });
+    if(!breeds.includes(breedInput.value)) breedInput.value="";
+}
+</script>
+</head>
+<body>
+<div class="container">
+<div class="header">
+<h1> Livestock Management System</h1>
+<div>
+<span style="margin-right:15px">Welcome, <?= htmlspecialchars($_SESSION['username']) ?>!</span>
+<a href="?logout=1" class="logout-btn" onclick="return confirm('Are you sure you want to logout?')"> Logout</a>
+</div>
+</div>
+
+<a href="?page=home" class="card"> Dashboard</a>
+<a href="?page=all" class="card"> All Data</a>
+<a href="?page=animals" class="card"> Animals: <?= $totalAnimals ?></a>
+<a href="?page=records" class="card"> Health Records: <?= $totalHealth ?></a>
+
+<?php if($message): ?>
+<div class="success"> <?= htmlspecialchars($message) ?>...
