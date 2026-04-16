@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>SmartEye PTZ • Control Center</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.6.0/css/all.min.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+        
+        .glass {
+            background: rgba(15, 23, 42, 0.92);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(103, 232, 249, 0.25);
+        }
+
+        .video-frame {
+            background: #000;
+            border-radius: 24px;
+            overflow: hidden;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.6);
+        }
+
+        .zoom-level {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #67e8f9;
+        }
+    </style>
+</head>
+<body class="bg-gradient-to-br from-slate-950 to-slate-900 text-slate-100 min-h-screen">
+
+<div class="max-w-7xl mx-auto p-6">
+
+    <div class="flex justify-between items-center mb-10">
+        <h1 class="text-4xl font-bold bg-gradient-to-r from-cyan-400 to-violet-500 bg-clip-text text-transparent">
+            <i class="fas fa-camera"></i> SmartEye PTZ
+        </h1>
+        <div class="flex items-center gap-6">
+            <div class="px-5 py-2 bg-slate-800 rounded-2xl text-sm">
+                IP: <span id="cameraIP" class="font-mono text-cyan-400">192.168.137.36</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+
+        <!-- Live Video -->
+        <div class="lg:col-span-8">
+            <div class="glass rounded-3xl p-6">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-2xl font-semibold flex items-center gap-3">
+                        <i class="fas fa-eye"></i> Live Stream
+                    </h2>
+                    <div class="flex items-center gap-4">
+                        <span id="zoomLevel" class="zoom-level">Zoom: 1.0x</span>
+                        <span class="px-4 py-1 bg-emerald-500/20 text-emerald-400 rounded-full text-sm">LIVE</span>
+                    </div>
+                </div>
+                <div class="video-frame aspect-video">
+                    <img id="liveStream" src="http://192.168.137.13:81/stream" 
+                         class="w-full h-full object-contain" alt="Live Stream">
+                </div>
+            </div>
+        </div>
+
+        <!-- Control Panel -->
+        <div class="lg:col-span-4">
+            <div class="glass rounded-3xl p-8 h-full">
+                <h2 class="text-2xl font-semibold mb-8 flex items-center gap-3">
+                    <i class="fas fa-gamepad"></i> PTZ + Zoom Control
+                </h2>
+
+                <!-- PTZ Direction Buttons -->
+                <div class="grid grid-cols-3 gap-4 max-w-[280px] mx-auto mb-10">
+                    <div></div>
+                    <button onclick="move('up')" class="ptz-btn">
+                        <i class="fas fa-arrow-up text-3xl"></i>
+                    </button>
+                    <div></div>
+
+                    <button onclick="move('left')" class="ptz-btn">
+                        <i class="fas fa-arrow-left text-3xl"></i>
+                    </button>
+                    <button onclick="move('stop')" class="ptz-btn bg-red-500/20 border-red-500 text-red-400">
+                        <i class="fas fa-stop text-3xl"></i>
+                    </button>
+                    <button onclick="move('right')" class="ptz-btn">
+                        <i class="fas fa-arrow-right text-3xl"></i>
+                    </button>
+
+                    <div></div>
+                    <button onclick="move('down')" class="ptz-btn">
+                        <i class="fas fa-arrow-down text-3xl"></i>
+                    </button>
+                    <div></div>
+                </div>
+
+                <!-- Zoom Control -->
+                <div class="mb-8">
+                    <label class="block text-slate-400 text-sm mb-3">Zoom Control</label>
+                    <div class="flex items-center gap-4">
+                        <button onclick="zoomOut()" class="w-12 h-12 bg-slate-800 hover:bg-slate-700 rounded-2xl flex items-center justify-center text-2xl font-bold">
+                            −
+                        </button>
+                        
+                        <input type="range" id="zoomSlider" min="1" max="4" step="0.1" value="1" 
+                               class="flex-1 accent-cyan-400" oninput="updateZoom(this.value)">
+                        
+                        <button onclick="zoomIn()" class="w-12 h-12 bg-slate-800 hover:bg-slate-700 rounded-2xl flex items-center justify-center text-2xl font-bold">
+                            +
+                        </button>
+                    </div>
+                    <div class="text-center mt-3">
+                        <span id="currentZoom" class="text-xl font-semibold text-cyan-400">1.0x</span>
+                    </div>
+                </div>
+
+                <div id="status" class="text-center text-cyan-400 text-sm font-medium mt-6">
+                    Ready • Click buttons or use keyboard arrows
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// ==================== CONFIG ====================
+const CAMERA_IP = "192.168.137.36";   // ← Hindura na IP ya ESP32-CAM yawe
+
+let currentZoom = 1.0;
+
+// ==================== MOVE CAMERA ====================
+async function move(direction) {
+    const status = document.getElementById('status');
+    status.innerHTML = `Moving ${direction.toUpperCase()}...`;
+
+    try {
+        await fetch(`http://${CAMERA_IP}/ptz?dir=${direction}`);
+        status.innerHTML = `✓ Moved ${direction.toUpperCase()}`;
+        
+        setTimeout(() => {
+            status.innerHTML = "Ready • Click buttons or use keyboard arrows";
+        }, 1500);
+    } catch (err) {
+        status.innerHTML = "❌ Failed to connect to camera";
+    }
+}
+
+// ==================== ZOOM CONTROL ====================
+function zoomIn() {
+    currentZoom = Math.min(currentZoom + 0.2, 4.0);
+    updateZoomDisplay();
+}
+
+function zoomOut() {
+    currentZoom = Math.max(currentZoom - 0.2, 1.0);
+    updateZoomDisplay();
+}
+
+function updateZoom(value) {
+    currentZoom = parseFloat(value);
+    updateZoomDisplay();
+}
+
+function updateZoomDisplay() {
+    document.getElementById('currentZoom').textContent = currentZoom.toFixed(1) + "x";
+    // Future: You can send zoom command to ESP32-CAM if your firmware supports digital zoom
+}
+
+// Keyboard Support
+document.addEventListener('keydown', (e) => {
+    if (e.key === "ArrowUp")    move('up');
+    if (e.key === "ArrowDown")  move('down');
+    if (e.key === "ArrowLeft")  move('left');
+    if (e.key === "ArrowRight") move('right');
+    if (e.key === "+") zoomIn();
+    if (e.key === "-") zoomOut();
+});
+
+// Auto refresh stream
+setInterval(() => {
+    const stream = document.getElementById('liveStream');
+    if (stream) stream.src = `http://${CAMERA_IP}:81/stream?t=` + Date.now();
+}, 30000);
+
+alert("✅ PTZ Dashboard yavuguruwe!\n\n- Use arrows for PTZ movement\n- Use + and - for Zoom");
+</script>
+</body>
+<!DOCTYPE html>
+<html lang="en">
